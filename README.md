@@ -123,13 +123,49 @@ If the worker can't complete a job, it should still send a `reply` with the expl
 
 ## Configuration
 
-| Env var | Default | Purpose |
+| Key | Default | Purpose |
 |---|---|---|
 | `AGENT_SALON_URL` | `http://127.0.0.1:9315/mcp?label=broker` | salon MCP endpoint, including `?label=` |
 | `AGENT_SALON_BROKER_TARGET` | `claudep` | default salon label to dispatch jobs to |
 | `AGENT_SALON_BROKER_LISTEN` | `127.0.0.1:9316` | broker HTTP bind address |
 | `AGENT_SALON_BROKER_TIMEOUT_SEC` | `600` | default per-job timeout in seconds |
 | `AGENT_SALON_BROKER_BASE_URL` | derived from `LISTEN` | broker base URL used by `submit` caller mode |
+| `AGENT_SALON_BROKER_CONFIG` | unset | path to a `KEY=VALUE` config file (see below) |
+
+### Config file
+
+If `AGENT_SALON_BROKER_CONFIG` points at a readable file, the broker reads `KEY=VALUE` entries from it on startup. The live process environment always wins, so the precedence is:
+
+1. process env (`AGENT_SALON_BROKER_LISTEN=...` in front of the command, launchd, systemd unit, …)
+2. config file
+3. built-in default
+
+Format:
+
+- `KEY=VALUE` per line.
+- Lines starting with `#` and blank lines are ignored.
+- Surrounding double quotes around the value are stripped (so `URL="..."` works for values containing `&`).
+
+The Homebrew formula creates `${HOMEBREW_PREFIX}/etc/agent-salon-broker.conf` on first install and sets `AGENT_SALON_BROKER_CONFIG` to point at it. Edit that file to customise the daemon without touching the launchd service definition.
+
+### Exposing the broker on a Tailnet
+
+By default the broker binds to `127.0.0.1:9316`, so only the local machine can reach it. To accept requests from other devices on a Tailscale network, bind to all interfaces:
+
+```sh
+# in agent-salon-broker.conf
+AGENT_SALON_BROKER_LISTEN=0.0.0.0:9316
+```
+
+Then from another Tailnet member:
+
+```sh
+curl -X POST http://<tailnet-host>:9316/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt": "..."}'
+```
+
+Tailscale's MagicDNS / ACLs are the authentication and authorisation layer here — the broker itself does no auth. Don't expose port 9316 outside the Tailnet (`tailscale serve`, public NAT forwards, etc.).
 
 ## Worker protocol
 
