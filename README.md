@@ -119,7 +119,7 @@ queued ─send──▶ assigned ─reply──▶ done
                     └──── timeout ──▶ timeout
 ```
 
-`failed` is reserved for explicit error replies from the worker; the v1 worker prompt only emits `done` or relies on `timeout`.
+If the worker can't complete a job, it should still send a `reply` with the explanation in `content` (the broker sees this as `done`); jobs only become `timeout` when no reply arrives in time.
 
 ## Configuration
 
