@@ -134,7 +134,13 @@ If the worker can't complete a job, it should still send a `reply` with the expl
 
 ### Config file
 
-If `AGENT_SALON_BROKER_CONFIG` points at a readable file, the broker reads `KEY=VALUE` entries from it on startup. The live process environment always wins, so the precedence is:
+If `AGENT_SALON_BROKER_CONFIG` points at a readable file, the broker reads `KEY=VALUE` entries from it on startup. When that env var is unset, the broker probes well-known Homebrew prefixes and uses the first one that exists:
+
+1. `/opt/homebrew/etc/agent-salon-broker.conf` (Homebrew on Apple Silicon)
+2. `/usr/local/etc/agent-salon-broker.conf` (Homebrew on Intel Mac)
+3. `/home/linuxbrew/.linuxbrew/etc/agent-salon-broker.conf` (Linuxbrew)
+
+The live process environment always wins, so the precedence is:
 
 1. process env (`AGENT_SALON_BROKER_LISTEN=...` in front of the command, launchd, systemd unit, …)
 2. config file
@@ -146,7 +152,7 @@ Format:
 - Lines starting with `#` and blank lines are ignored.
 - Surrounding double quotes around the value are stripped (so `URL="..."` works for values containing `&`).
 
-The Homebrew formula creates `${HOMEBREW_PREFIX}/etc/agent-salon-broker.conf` on first install and sets `AGENT_SALON_BROKER_CONFIG` to point at it. Edit that file to customise the daemon without touching the launchd service definition.
+The Homebrew formula creates `${HOMEBREW_PREFIX}/etc/agent-salon-broker.conf` on first install. Both the launchd service and `agent-salon-broker submit` invocations from a user shell pick the same conf up automatically (the latter via the fallback probe above).
 
 ### Exposing the broker on a Tailnet
 

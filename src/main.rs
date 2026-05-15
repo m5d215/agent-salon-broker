@@ -43,13 +43,35 @@ fn cfg_var(config: &HashMap<String, String>, key: &str) -> Option<String> {
     std::env::var(key).ok().or_else(|| config.get(key).cloned())
 }
 
-/// Read `AGENT_SALON_BROKER_CONFIG` and parse the file at that path. Returns
-/// an empty map when the env var is unset (no config file used) or when the
-/// file is missing (warning logged). The path is exposed via env so that
-/// platform installers (e.g. the Homebrew formula) can point at
-/// `${HOMEBREW_PREFIX}/etc/agent-salon-broker.conf` without code changes here.
+/// Standard Homebrew prefixes searched when `AGENT_SALON_BROKER_CONFIG` is
+/// unset. The first existing file wins. Order: Apple Silicon, Intel Mac,
+/// Linuxbrew. Lets `agent-salon-broker submit` from a user shell auto-pick
+/// up the same conf the launchd service uses, without requiring the env var
+/// in shell rc.
+const FALLBACK_CONFIG_PATHS: &[&str] = &[
+    "/opt/homebrew/etc/agent-salon-broker.conf",
+    "/usr/local/etc/agent-salon-broker.conf",
+    "/home/linuxbrew/.linuxbrew/etc/agent-salon-broker.conf",
+];
+
+/// Resolve the config file path. If `AGENT_SALON_BROKER_CONFIG` is set we
+/// honor it verbatim (missing file → warning). Otherwise we probe the
+/// well-known Homebrew prefixes and return the first one that exists; if
+/// none exist, no config file is used.
+fn resolve_config_path() -> Option<String> {
+    if let Ok(p) = std::env::var("AGENT_SALON_BROKER_CONFIG") {
+        return Some(p);
+    }
+    FALLBACK_CONFIG_PATHS
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .map(|p| (*p).to_string())
+}
+
+/// Read the resolved config path and parse it. Returns an empty map when
+/// no path resolves or the file is unreadable.
 fn load_config_file() -> HashMap<String, String> {
-    let Ok(path) = std::env::var("AGENT_SALON_BROKER_CONFIG") else {
+    let Some(path) = resolve_config_path() else {
         return HashMap::new();
     };
     match std::fs::read_to_string(&path) {
