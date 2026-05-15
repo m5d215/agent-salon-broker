@@ -49,7 +49,6 @@ enum JobStatus {
     Queued,
     Assigned,
     Done,
-    Failed,
     Timeout,
 }
 
@@ -120,7 +119,7 @@ impl JobStore {
         let Some(j) = map.get_mut(id) else {
             return false;
         };
-        if matches!(j.status, JobStatus::Done | JobStatus::Failed | JobStatus::Timeout) {
+        if matches!(j.status, JobStatus::Done | JobStatus::Timeout) {
             return false;
         }
         j.status = JobStatus::Done;
@@ -174,10 +173,9 @@ impl ClientHandler for BrokerClient {
             if notification.method != "notifications/claude/channel" {
                 return;
             }
-            let Some(params) = notification.params else {
+            let Some(params_value) = notification.params else {
                 return;
             };
-            let params_value = serde_json::Value::from(params);
 
             let job_id = params_value
                 .get("meta")
@@ -291,10 +289,7 @@ async fn handle_submit(
     }
 }
 
-async fn handle_status(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
+async fn handle_status(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.store.get(&id) {
         Some(job) => (StatusCode::OK, Json(job)).into_response(),
         None => (StatusCode::NOT_FOUND, "no such job").into_response(),
@@ -313,29 +308,37 @@ async fn run_caller(args: &[String]) -> Result<()> {
     let mut prompt: Option<String> = None;
     let mut target: Option<String> = None;
     let mut timeout_sec: Option<i64> = None;
-    let mut base_url =
-        std::env::var("AGENT_SALON_BROKER_BASE_URL").unwrap_or_else(|_| {
-            format!(
-                "http://{}",
-                std::env::var("AGENT_SALON_BROKER_LISTEN")
-                    .unwrap_or_else(|_| DEFAULT_LISTEN.to_string())
-            )
-        });
+    let mut base_url = std::env::var("AGENT_SALON_BROKER_BASE_URL").unwrap_or_else(|_| {
+        format!(
+            "http://{}",
+            std::env::var("AGENT_SALON_BROKER_LISTEN")
+                .unwrap_or_else(|_| DEFAULT_LISTEN.to_string())
+        )
+    });
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
             "--target" => {
-                target = Some(args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?);
+                target = Some(
+                    args.get(i + 1)
+                        .cloned()
+                        .ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?,
+                );
                 i += 2;
             }
             "--timeout" => {
-                let v = args.get(i + 1).ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?;
+                let v = args
+                    .get(i + 1)
+                    .ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?;
                 timeout_sec = Some(v.parse()?);
                 i += 2;
             }
             "--base-url" => {
-                base_url = args.get(i + 1).cloned().ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?;
+                base_url = args
+                    .get(i + 1)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!(CALLER_USAGE))?;
                 i += 2;
             }
             other if other.starts_with("--") => {
