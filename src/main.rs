@@ -36,6 +36,64 @@ const DEFAULT_LISTEN: &str = "127.0.0.1:9316";
 const DEFAULT_TIMEOUT_SEC: i64 = 600;
 const SWEEPER_INTERVAL_SEC: u64 = 1;
 
+/// Resolve a config value, preferring the live process environment over
+/// any value loaded from the config file. Empty environment values are
+/// treated as "set" (returned as-is) — same behavior as `std::env::var`.
+fn cfg_var(config: &HashMap<String, String>, key: &str) -> Option<String> {
+    std::env::var(key).ok().or_else(|| config.get(key).cloned())
+}
+
+/// Read `AGENT_SALON_BROKER_CONFIG` and parse the file at that path. Returns
+/// an empty map when the env var is unset (no config file used) or when the
+/// file is missing (warning logged). The path is exposed via env so that
+/// platform installers (e.g. the Homebrew formula) can point at
+/// `${HOMEBREW_PREFIX}/etc/agent-salon-broker.conf` without code changes here.
+fn load_config_file() -> HashMap<String, String> {
+    let Ok(path) = std::env::var("AGENT_SALON_BROKER_CONFIG") else {
+        return HashMap::new();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => {
+            let map = parse_config(&s);
+            tracing::info!("loaded {} setting(s) from {path}", map.len());
+            map
+        }
+        Err(e) => {
+            tracing::warn!("skipping config {path}: {e}");
+            HashMap::new()
+        }
+    }
+}
+
+/// Parse a `KEY=VALUE` config file. Lines starting with `#` and blank lines
+/// are skipped. Keys with no `=` are skipped. Surrounding double quotes
+/// around the value (`KEY="value"`) are stripped. Whitespace around the key
+/// and around the value (outside the quotes) is trimmed.
+fn parse_config(s: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for line in s.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        let k = k.trim();
+        if k.is_empty() {
+            continue;
+        }
+        let v = v.trim();
+        let v = if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') {
+            &v[1..v.len() - 1]
+        } else {
+            v
+        };
+        out.insert(k.to_string(), v.to_string());
+    }
+    out
+}
+
 /// Worker prompt emitted by `agent-salon-broker prompt`. Read into a claude
 /// code session (e.g. via `! agent-salon-broker prompt`) to set up the session
 /// as a worker for this broker.
@@ -305,15 +363,16 @@ async fn handle_list(State(state): State<AppState>) -> impl IntoResponse {
 const CALLER_USAGE: &str = "usage: agent-salon-broker submit <prompt> [--target <label>] [--timeout <sec>] [--base-url <url>]";
 
 async fn run_caller(args: &[String]) -> Result<()> {
+    let config = load_config_file();
     let mut prompt: Option<String> = None;
     let mut target: Option<String> = None;
     let mut timeout_sec: Option<i64> = None;
-    let mut base_url = std::env::var("AGENT_SALON_BROKER_BASE_URL").unwrap_or_else(|_| {
-        format!(
-            "http://{}",
-            std::env::var("AGENT_SALON_BROKER_LISTEN")
-                .unwrap_or_else(|_| DEFAULT_LISTEN.to_string())
-        )
+    let mut base_url = cfg_var(&config, "AGENT_SALON_BROKER_BASE_URL").unwrap_or_else(|| {
+        let listen = cfg_var(&config, "AGENT_SALON_BROKER_LISTEN")
+            .unwrap_or_else(|| DEFAULT_LISTEN.to_string());
+        // listen can be 0.0.0.0:N (caller can't connect to that) — rewrite to loopback.
+        let host_port = listen.replacen("0.0.0.0:", "127.0.0.1:", 1);
+        format!("http://{host_port}")
     });
 
     let mut i = 0;
@@ -415,16 +474,16 @@ async fn run_caller(args: &[String]) -> Result<()> {
 // ---------- Daemon entrypoint ----------
 
 async fn run_daemon() -> Result<()> {
+    let config = load_config_file();
     let salon_url =
-        std::env::var("AGENT_SALON_URL").unwrap_or_else(|_| DEFAULT_SALON_URL.to_string());
+        cfg_var(&config, "AGENT_SALON_URL").unwrap_or_else(|| DEFAULT_SALON_URL.to_string());
     let default_target =
-        std::env::var("AGENT_SALON_BROKER_TARGET").unwrap_or_else(|_| DEFAULT_TARGET.to_string());
-    let default_timeout_sec: i64 = std::env::var("AGENT_SALON_BROKER_TIMEOUT_SEC")
-        .ok()
+        cfg_var(&config, "AGENT_SALON_BROKER_TARGET").unwrap_or_else(|| DEFAULT_TARGET.to_string());
+    let default_timeout_sec: i64 = cfg_var(&config, "AGENT_SALON_BROKER_TIMEOUT_SEC")
         .and_then(|s| s.parse().ok())
         .unwrap_or(DEFAULT_TIMEOUT_SEC);
-    let listen: SocketAddr = std::env::var("AGENT_SALON_BROKER_LISTEN")
-        .unwrap_or_else(|_| DEFAULT_LISTEN.to_string())
+    let listen: SocketAddr = cfg_var(&config, "AGENT_SALON_BROKER_LISTEN")
+        .unwrap_or_else(|| DEFAULT_LISTEN.to_string())
         .parse()?;
 
     tracing::info!(%salon_url, %default_target, default_timeout_sec, %listen, "starting agent-salon-broker");
@@ -510,4 +569,44 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
     run_daemon().await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_config;
+
+    #[test]
+    fn parses_config_basic() {
+        let s = "\
+            AGENT_SALON_BROKER_LISTEN=0.0.0.0:9316\n\
+            AGENT_SALON_BROKER_TARGET=claudep\n\
+            AGENT_SALON_URL=http://127.0.0.1:9315/mcp?label=broker\n\
+        ";
+        let m = parse_config(s);
+        assert_eq!(m.get("AGENT_SALON_BROKER_LISTEN").unwrap(), "0.0.0.0:9316");
+        assert_eq!(m.get("AGENT_SALON_BROKER_TARGET").unwrap(), "claudep");
+        assert_eq!(
+            m.get("AGENT_SALON_URL").unwrap(),
+            "http://127.0.0.1:9315/mcp?label=broker"
+        );
+    }
+
+    #[test]
+    fn parses_config_skips_blank_comment_and_malformed() {
+        let s = "\n# comment\n  # indented comment\n\nLISTEN=0.0.0.0:9316\nnokeyeq\n=onlyvalue\nGOOD=ok\n";
+        let m = parse_config(s);
+        assert_eq!(m.get("LISTEN").unwrap(), "0.0.0.0:9316");
+        assert_eq!(m.get("GOOD").unwrap(), "ok");
+        assert_eq!(m.len(), 2);
+    }
+
+    #[test]
+    fn parses_config_strips_outer_quotes_and_preserves_inner() {
+        let s = "URL=\"http://host:9315/mcp?label=broker&x=1\"\n";
+        let m = parse_config(s);
+        assert_eq!(
+            m.get("URL").unwrap(),
+            "http://host:9315/mcp?label=broker&x=1"
+        );
+    }
 }
