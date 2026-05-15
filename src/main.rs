@@ -95,7 +95,7 @@ impl JobStore {
     fn list(&self) -> Vec<Job> {
         let map = self.jobs.lock().unwrap();
         let mut v: Vec<Job> = map.values().cloned().collect();
-        v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        v.sort_by_key(|j| std::cmp::Reverse(j.created_at));
         v
     }
 
