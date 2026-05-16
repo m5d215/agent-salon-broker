@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::jsonl::JsonlLogger;
+use crate::jsonl::{JobLogEntry, JsonlLogger};
 use crate::metrics::{
     BuildInfoLabels, EndpointLabels, JobResultLabels, Metrics, RequestLabels, status_class,
 };
@@ -310,15 +310,15 @@ impl ClientHandler for BrokerClient {
                             .get_or_create(&labels)
                             .observe(job_duration_sec(&job));
                         metrics.jobs_in_flight.set(store.in_flight_count());
-                        jsonl.job(
-                            &job.job_id,
-                            &job.target,
-                            "done",
-                            job_duration_sec(&job),
-                            job.prompt.len(),
-                            Some(content.len()),
-                            None,
-                        );
+                        jsonl.job(JobLogEntry {
+                            job_id: &job.job_id,
+                            target: &job.target,
+                            result: "done",
+                            duration_sec: job_duration_sec(&job),
+                            prompt_len: job.prompt.len(),
+                            result_len: Some(content.len()),
+                            error: None,
+                        });
                     }
                     None => {
                         tracing::debug!(%id, "notification matched no pending job (already done or unknown)");
@@ -704,15 +704,15 @@ async fn run_daemon() -> Result<()> {
                 sweeper_metrics
                     .jobs_in_flight
                     .set(sweeper_store.in_flight_count());
-                sweeper_jsonl.job(
-                    &job.job_id,
-                    &job.target,
-                    "timeout",
-                    job_duration_sec(&job),
-                    job.prompt.len(),
-                    None,
-                    job.error.as_deref(),
-                );
+                sweeper_jsonl.job(JobLogEntry {
+                    job_id: &job.job_id,
+                    target: &job.target,
+                    result: "timeout",
+                    duration_sec: job_duration_sec(&job),
+                    prompt_len: job.prompt.len(),
+                    result_len: None,
+                    error: job.error.as_deref(),
+                });
             }
         }
     });

@@ -19,6 +19,19 @@ pub struct JsonlLogger {
     path: Option<PathBuf>,
 }
 
+#[derive(Serialize)]
+pub struct JobLogEntry<'a> {
+    pub job_id: &'a str,
+    pub target: &'a str,
+    pub result: &'a str,
+    pub duration_sec: f64,
+    pub prompt_len: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_len: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<&'a str>,
+}
+
 impl JsonlLogger {
     /// Open the logger if `AGENT_SALON_BROKER_JSONL_LOG` is set. Failure to
     /// open the path is logged once and produces a no-op logger — we never
@@ -100,43 +113,21 @@ impl JsonlLogger {
     }
 
     /// Emit a "job" line for a job reaching a terminal state.
-    pub fn job(
-        &self,
-        job_id: &str,
-        target: &str,
-        result: &str,
-        duration_sec: f64,
-        prompt_len: usize,
-        result_len: Option<usize>,
-        error: Option<&str>,
-    ) {
+    pub fn job(&self, entry: JobLogEntry<'_>) {
         if !self.enabled() {
             return;
         }
         #[derive(Serialize)]
-        struct Entry<'a> {
+        struct Wrapped<'a> {
             ts: String,
             kind: &'static str,
-            job_id: &'a str,
-            target: &'a str,
-            result: &'a str,
-            duration_sec: f64,
-            prompt_len: usize,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            result_len: Option<usize>,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            error: Option<&'a str>,
+            #[serde(flatten)]
+            entry: JobLogEntry<'a>,
         }
-        self.write_line(&Entry {
+        self.write_line(&Wrapped {
             ts: Self::now_rfc3339(),
             kind: "job",
-            job_id,
-            target,
-            result,
-            duration_sec,
-            prompt_len,
-            result_len,
-            error,
+            entry,
         });
     }
 
@@ -181,7 +172,15 @@ mod tests {
         let logger = JsonlLogger::from_env();
         assert!(!logger.enabled());
         logger.request("/submit", "POST", 200, 12, Some("abc"));
-        logger.job("abc", "claudep", "done", 3.5, 100, Some(200), None);
+        logger.job(JobLogEntry {
+            job_id: "abc",
+            target: "claudep",
+            result: "done",
+            duration_sec: 3.5,
+            prompt_len: 100,
+            result_len: Some(200),
+            error: None,
+        });
         logger.event("broker_started", serde_json::json!({"version": "0.3.0"}));
     }
 
@@ -194,16 +193,24 @@ mod tests {
         let logger = JsonlLogger::from_env();
         assert!(logger.enabled());
         logger.request("/submit", "POST", 200, 12, Some("abc"));
-        logger.job("abc", "claudep", "done", 3.5, 100, Some(200), None);
-        logger.job(
-            "def",
-            "claudep",
-            "timeout",
-            600.0,
-            50,
-            None,
-            Some("timed out after 600s"),
-        );
+        logger.job(JobLogEntry {
+            job_id: "abc",
+            target: "claudep",
+            result: "done",
+            duration_sec: 3.5,
+            prompt_len: 100,
+            result_len: Some(200),
+            error: None,
+        });
+        logger.job(JobLogEntry {
+            job_id: "def",
+            target: "claudep",
+            result: "timeout",
+            duration_sec: 600.0,
+            prompt_len: 50,
+            result_len: None,
+            error: Some("timed out after 600s"),
+        });
         logger.event("broker_started", serde_json::json!({"version": "0.3.0"}));
         // SAFETY: as above.
         unsafe { std::env::remove_var("AGENT_SALON_BROKER_JSONL_LOG") };
