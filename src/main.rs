@@ -432,7 +432,10 @@ async fn handle_submit(
             completed_at: None,
         };
         state.store.insert(job);
-        state.metrics.jobs_in_flight.set(state.store.in_flight_count());
+        state
+            .metrics
+            .jobs_in_flight
+            .set(state.store.in_flight_count());
 
         let send_result = state
             .client
@@ -505,7 +508,10 @@ async fn handle_metrics(State(state): State<AppState>) -> axum::response::Respon
     };
     (
         StatusCode::OK,
-        [("content-type", "application/openmetrics-text; version=1.0.0; charset=utf-8")],
+        [(
+            "content-type",
+            "application/openmetrics-text; version=1.0.0; charset=utf-8",
+        )],
         body,
     )
         .into_response()
@@ -675,10 +681,7 @@ async fn run_daemon() -> Result<()> {
         .map(|p| p.server_info.name.clone())
         .unwrap_or_else(|| "unknown".to_string());
     tracing::info!(peer = %peer_name, "salon connected");
-    jsonl.event(
-        "salon_connected",
-        serde_json::json!({"peer": peer_name}),
-    );
+    jsonl.event("salon_connected", serde_json::json!({"peer": peer_name}));
 
     // Timeout sweeper.
     let sweeper_store = store.clone();

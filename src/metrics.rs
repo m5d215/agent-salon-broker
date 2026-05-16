@@ -97,11 +97,7 @@ impl Metrics {
         );
 
         let jobs = Family::<JobResultLabels, Counter>::default();
-        registry.register(
-            "jobs",
-            "Terminated jobs, by result",
-            jobs.clone(),
-        );
+        registry.register("jobs", "Terminated jobs, by result", jobs.clone());
 
         let job_duration = Family::<JobResultLabels, Histogram>::new_with_constructor(|| {
             Histogram::new(JOB_DURATION_BUCKETS.iter().copied())
