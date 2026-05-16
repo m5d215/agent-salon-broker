@@ -1,6 +1,6 @@
 [package]
 name = "agent-salon-broker"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Broker daemon that routes claude -p-style jobs to a persistent Claude Code session via agent-salon."
 license = "MIT"
@@ -10,6 +10,7 @@ repository = "https://github.com/m5d215/agent-salon-broker"
 anyhow = "1"
 axum = { version = "0.8", features = ["json"] }
 chrono = { version = "0.4", features = ["serde"] }
+prometheus-client = "0.24"
 reqwest = { version = "0.13", features = ["json"], default-features = false }
 rmcp = { version = "1.7", features = [
     "client",
@@ -22,3 +23,6 @@ tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+tempfile = "3"
